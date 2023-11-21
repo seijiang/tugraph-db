@@ -25,8 +25,11 @@
 #include "cypher/execution_plan/ops/op_node_index_seek_dynamic.h"
 #include "cypher/execution_plan/ops/op_node_by_label_scan.h"
 #include "cypher/execution_plan/ops/op_node_by_label_scan_dynamic.h"
+#include "cypher/execution_plan/ops/op_var_len_expand.h"
 #include "cypher/execution_plan/optimization/opt_pass.h"
 #include "cypher/execution_plan/optimization/rewrite/schema_rewrite.h"
+#include "cypher/execution_plan/optimization/rewrite/path_info.h"
+#include "cypher/execution_plan/optimization/rewrite/rewrite_helper.h"
 
 namespace cypher {
 
@@ -78,7 +81,6 @@ class OptRewriteWithSchemaInference : public OptPass {
 
     // match子句中的模式图可以分为多个极大连通子图，该函数提取每个极大连通子图的点和边，经过分析后加上标签信息
     void _ExtractStreamAndAddLabels(OpBase *root, const lgraph::SchemaInfo *schema_info) {
-        CYPHER_THROW_ASSERT(root->type == OpType::EXPAND_ALL);
         SchemaNodeMap schema_node_map;
         SchemaRelpMap schema_relp_map;
         auto op = root;
@@ -99,12 +101,29 @@ class OptRewriteWithSchemaInference : public OptPass {
 
                 schema_node_map[start->ID()] = start->Label();
                 schema_node_map[neighbor->ID()] = neighbor->Label();
-                std::tuple<NodeID, NodeID, std::set<std::string>, parser::LinkDirection>
-                    relp_map_value(start->ID(), neighbor->ID(), relp->Types(), relp->direction_);
+                std::tuple<NodeID, NodeID, std::set<std::string>, parser::LinkDirection, int, int>
+                    relp_map_value(start->ID(), neighbor->ID(), relp->Types(), relp->direction_,
+                                   relp->min_hop_, relp->max_hop_);
                 schema_relp_map[relp->ID()] = relp_map_value;
-            } else if (op->type == OpType::VAR_LEN_EXPAND) {
-                // 含有可变长算子的情况暂不处理
-                return;
+            } else if (auto varlen = dynamic_cast<VarLenExpand *>(op)) {
+                auto start = varlen->GetStartNode();
+                auto relp = varlen->GetRelationship();
+                auto neighbor = varlen->GetNeighborNode();
+                if (!check_v_label_valid(schema_info, start->Label())) {
+                    return;
+                }
+                if (!check_v_label_valid(schema_info, neighbor->Label())) {
+                    return;
+                }
+                if (!check_e_labels_valid(schema_info, relp->Types())) {
+                    return;
+                }
+                schema_node_map[start->ID()] = start->Label();
+                schema_node_map[neighbor->ID()] = neighbor->Label();
+                std::tuple<NodeID, NodeID, std::set<std::string>, parser::LinkDirection, int, int>
+                    relp_map_value(start->ID(), neighbor->ID(), relp->Types(), relp->direction_,
+                                   relp->min_hop_, relp->max_hop_);
+                schema_relp_map[relp->ID()] = relp_map_value;
             } else if ((op->IsScan() || op->IsDynamicScan()) && op->type != OpType::ARGUMENT) {
                 NodeID id;
                 std::string label;
@@ -141,16 +160,14 @@ class OptRewriteWithSchemaInference : public OptPass {
             op = op->children[0];
         }
         // 调用schema函数
-        rewrite::SchemaRewrite schema_rewrite;
-        std::vector<SchemaGraphMap> schema_graph_maps;
-        schema_graph_maps =
-            schema_rewrite.GetEffectivePath(*schema_info, &schema_node_map, &schema_relp_map);
-        // 目前只对一条可行路径的情况进行重写
-        if (schema_graph_maps.size() != 1) {
+        std::vector<rewrite::PathInfo> map_infos;
+        rewrite::RewriteHelper rewrite_helper(*schema_info, &schema_node_map, &schema_relp_map);
+        map_infos = rewrite_helper.GetEffectivePath();
+        if (map_infos.size() != 1) {
             return;
         }
-        schema_node_map = schema_graph_maps[0].first;
-        schema_relp_map = schema_graph_maps[0].second;
+        schema_node_map = map_infos[0].m_schema_node_map;
+        schema_relp_map = map_infos[0].m_schema_relp_map;
         op = root;
         while (true) {
             if (auto expand_all = dynamic_cast<ExpandAll *>(op)) {
@@ -165,7 +182,28 @@ class OptRewriteWithSchemaInference : public OptPass {
                 }
                 if (schema_relp_map.find(relp->ID()) != schema_relp_map.end()) {
                     relp->SetTypes(std::get<2>(schema_relp_map.find(relp->ID())->second));
+                    relp->SetDirection(std::get<3>(schema_relp_map.find(relp->ID())->second));
                 }
+            } else if (auto varlen = dynamic_cast<VarLenExpand *>(op)) {
+                auto start = varlen->GetStartNode();
+                auto relp = varlen->GetRelationship();
+                auto neighbor = varlen->GetNeighborNode();
+                if (schema_node_map.find(start->ID()) != schema_node_map.end()) {
+                    start->SetLabel(schema_node_map.find(start->ID())->second);
+                }
+                if (schema_node_map.find(neighbor->ID()) != schema_node_map.end()) {
+                    neighbor->SetLabel(schema_node_map.find(neighbor->ID())->second);
+                }
+                const auto varlen_paths = map_infos[0].m_var_len_paths_map.find(relp->ID())->second;
+                relp->SetPaths(varlen_paths);
+                auto new_varlen =
+                    new VarLenExpand(varlen->pattern_graph_, start, neighbor, relp, varlen_paths);
+                auto parent = varlen->parent;
+                for (auto child : varlen->children) {
+                    new_varlen->AddChild(child);
+                }
+                parent->RemoveChild(varlen);
+                parent->AddChild(new_varlen);
             } else if (auto all_node_scan = dynamic_cast<AllNodeScan *>(op)) {
                 auto node = all_node_scan->GetNode();
                 if (schema_node_map.find(node->ID()) != schema_node_map.end()) {
@@ -183,8 +221,7 @@ class OptRewriteWithSchemaInference : public OptPass {
                 if (schema_node_map.find(node->ID()) != schema_node_map.end()) {
                     node->SetLabel(schema_node_map.find(node->ID())->second);
                 }
-                auto op_label_scan =
-                    new NodeByLabelScanDynamic(node, all_node_scan_dy->SymTab());
+                auto op_label_scan = new NodeByLabelScanDynamic(node, all_node_scan_dy->SymTab());
                 auto parent = all_node_scan_dy->parent;
                 for (auto child : all_node_scan_dy->children) {
                     op_label_scan->AddChild(child);
@@ -219,8 +256,8 @@ class OptRewriteWithSchemaInference : public OptPass {
     }
 
     void _RewriteWithSchemaInference(OpBase *root, const lgraph::SchemaInfo *schema_info) {
-        // 对单独的点和可变长不予优化
-        if (root->type == OpType::EXPAND_ALL) {
+        // 对单独的点不予优化
+        if (root->type == OpType::EXPAND_ALL || root->type == OpType::VAR_LEN_EXPAND) {
             _ExtractStreamAndAddLabels(root, schema_info);
         } else {
             for (auto child : root->children) {

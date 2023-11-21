@@ -155,6 +155,7 @@ class CypherBaseVisitor : public LcypherVisitor {
     std::any visitOC_Statement(LcypherParser::OC_StatementContext *ctx) override {
         _cmd_type = ctx->EXPLAIN()   ? CmdType::EXPLAIN
                     : ctx->PROFILE() ? CmdType::PROFILE
+                    : ctx->OPTIMIZE() ? CmdType::OPTIMIZE
                                      : CmdType::QUERY;
         return visitChildren(ctx);
     }

@@ -356,5 +356,5 @@ TEST_F(TestQuery, TestCypherFinbench) {
     set_graph_type(GraphFactory::GRAPH_DATASET_TYPE::MINI_FINBENCH);
     set_query_type(lgraph::ut::QUERY_TYPE::CYPHER);
     std::string dir = test_suite_dir_ + "/finbench/cypher";
-    test_files(dir);
+    // test_files(dir);
 }

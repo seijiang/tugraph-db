@@ -12,30 +12,49 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-//
-// Created by liyunlong2000 on 23-07-19.
-//
 #pragma once
 #include <iostream>
 
-namespace cypher::rewrite {
+namespace cypher {
+typedef std::map<cypher::NodeID, std::string> SchemaNodeMap;
+typedef std::map<cypher::RelpID, std::tuple<cypher::NodeID, cypher::NodeID, std::set<std::string>,
+                                            parser::LinkDirection, int, int>>
+    SchemaRelpMap;
+typedef std::pair<SchemaNodeMap, SchemaRelpMap> SchemaGraphMap;
+namespace rewrite {
 
+struct EidDirection {
+    size_t m_eid;
+    parser::LinkDirection m_direction;
+    EidDirection(size_t eid, parser::LinkDirection direction)
+        : m_eid(eid), m_direction(direction) {}
+
+    bool operator<(const EidDirection& ed2) const { return this->m_eid < ed2.m_eid; }
+};
+
+// 查询图上vid到next_vid之间的可行映射在id_map中，key为目标图上与next_vid对应的节点。value为目标图上所有可行的边
 class StateInfo {
  public:
     size_t m_vid;
     size_t m_next_vid;
     size_t m_eid;
-    size_t m_direction;
-    std::map<size_t, std::set<size_t>> m_id_map;
+    parser::LinkDirection m_direction;
+    std::map<size_t, std::set<EidDirection>> m_id_map;
     StateInfo() {}
-    StateInfo(size_t vid, size_t next_vid, size_t eid, size_t direction,
-              std::map<size_t, std::set<size_t>>* id_map) {
-        m_vid = vid;
-        m_next_vid = next_vid;
-        m_eid = eid;
-        m_direction = direction;
-        m_id_map = *id_map;
+    StateInfo(size_t vid, size_t next_vid, size_t eid, parser::LinkDirection direction,
+              std::map<size_t, std::set<EidDirection>>* id_map)
+        : m_vid(vid), m_next_vid(next_vid), m_eid(eid), m_direction(direction), m_id_map(*id_map) {}
+    // StateInfo(size_t vid,size_t next_vid,size_t eid,size_t direction,
+    // std::map<size_t,std::set<size_t>>* id_map)
+    // :m_vid(vid),m_next_vid(next_vid),m_eid(eid),m_direction(direction),m_id_map(*id_map){
+    // }
+
+    void Print() {
+        std::cout << "vid:" << m_vid << std::endl;
+        std::cout << "m_next_vid:" << m_next_vid << std::endl;
+        std::cout << "direction:" << m_direction << std::endl;
     }
 };
 
-};  // namespace cypher::rewrite
+};  // namespace rewrite
+};  // namespace cypher

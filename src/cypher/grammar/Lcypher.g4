@@ -37,11 +37,14 @@ oC_Cypher : SP? oC_Statement ( SP? ';' )? SP? EOF ;
 oC_Statement : oC_Query
              | EXPLAIN SP? oC_Query
              | PROFILE SP? oC_Query
+             | OPTIMIZE SP? oC_Query
              ;
 
 EXPLAIN : ( 'E' | 'e' ) ( 'X' | 'x' ) ( 'P' | 'p' ) ( 'L' | 'l' ) ( 'A' | 'a' ) ( 'I' | 'i' ) ( 'N' | 'n' ) ;
 
 PROFILE : ( 'P' | 'p' ) ( 'R' | 'r' ) ( 'O' | 'o' ) ( 'F' | 'f' ) ( 'I' | 'i' ) ( 'L' | 'l' ) ( 'E' | 'e' ) ;
+
+OPTIMIZE : ( 'O' | 'o' ) ( 'P' | 'p' ) ( 'T' | 't' ) ( 'I' | 'i' ) ( 'M' | 'm' ) ( 'I' | 'i' ) ( 'Z' | 'z' ) ( 'E' | 'e' ) ;
 
 oC_Query : oC_RegularQuery
          | oC_StandaloneCall

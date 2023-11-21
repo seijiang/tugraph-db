@@ -66,7 +66,10 @@ set(LGRAPH_CYPHER_SRC   # find cypher/ -name "*.cpp" | sort
         cypher/resultset/record.cpp
         cypher/monitor/monitor_manager.cpp
         cypher/execution_plan/optimization/rewrite/schema_rewrite.cpp
+        cypher/execution_plan/optimization/rewrite/path_.cpp
+        cypher/execution_plan/optimization/rewrite/rewrite_helper.cpp
         cypher/execution_plan/optimization/rewrite/graph.cpp
+        cypher/execution_plan/optimization/rewrite/path_info.cpp
         )
 
 add_library(${TARGET_LGRAPH_CYPHER_LIB} STATIC

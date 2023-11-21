@@ -20,6 +20,7 @@
 #include <string>
 #include "cypher/graph/common.h"
 #include "parser/data_typedef.h"
+#include "cypher/execution_plan/optimization/rewrite/path.h"
 
 namespace cypher {
 
@@ -32,6 +33,7 @@ class Relationship {
     lgraph::EIter it_;
     // Store edge iterators for variable length relationship, which slightly duplicate path_.
     std::vector<lgraph::EIter> its_;
+    std::vector<rewrite::Path> varlen_paths_;
 
  public:
     parser::LinkDirection direction_ = parser::LinkDirection::UNKNOWN;
@@ -63,6 +65,12 @@ class Relationship {
     const std::set<std::string> &Types() const;
 
     void SetTypes(const std::set<std::string> &types) { types_ = types; }
+
+    void SetPaths(const std::vector<rewrite::Path> &paths) { varlen_paths_ = paths; }
+
+    void SetDirection(const parser::LinkDirection &direction) { direction_ = direction; }
+
+    const std::vector<rewrite::Path> GetPaths() const { return varlen_paths_; }
 
     NodeID Lhs() const { return lhs_; }
 
