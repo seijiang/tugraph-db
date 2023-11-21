@@ -29,6 +29,7 @@
 #include "parser/generated/LcypherParser.h"
 #include "parser/cypher_base_visitor.h"
 #include "parser/cypher_error_listener.h"
+#include "parser/parse_tree_to_cypher_visitor.h"
 
 #include "cypher/execution_plan/execution_plan.h"
 #include "cypher/execution_plan/scheduler.h"
@@ -77,7 +78,8 @@ void Scheduler::EvalCypher(RTContext *ctx, const std::string &script, ElapsedTim
          * setErrorHandler(std::make_shared<BailErrorStrategy>());
          * add customized ErrorListener  */
         parser.addErrorListener(&CypherErrorListener::INSTANCE);
-        CypherBaseVisitor visitor(ctx, parser.oC_Cypher());
+        auto oC_cypher = parser.oC_Cypher();
+        CypherBaseVisitor visitor(ctx, oC_cypher);
         FMA_DBG_STREAM(Logger()) << "-----CLAUSE TO STRING-----";
         for (const auto &sql_query : visitor.GetQuery()) {
             FMA_DBG_STREAM(Logger()) << sql_query.ToString();
@@ -92,6 +94,16 @@ void Scheduler::EvalCypher(RTContext *ctx, const std::string &script, ElapsedTim
             ctx->result_->ResetHeader({{"@plan", lgraph_api::LGraphType::STRING}});
             auto r = ctx->result_->MutableRecord();
             r->Insert("@plan", lgraph::FieldData(plan->DumpPlan(0, false)));
+            return;
+        } else if (visitor.CommandType() == parser::CmdType::OPTIMIZE) {
+            const std::vector<cypher::PatternGraph> &pattern_graphs = plan->GetPatternGraphs();
+            ParseTreeToCypherVisitor new_visitor(ctx, oC_cypher, pattern_graphs);
+            ctx->result_info_ = std::make_unique<ResultInfo>();
+            ctx->result_ = std::make_unique<lgraph::Result>();
+
+            ctx->result_->ResetHeader({{"@opt_query", lgraph_api::LGraphType::STRING}});
+            auto r = ctx->result_->MutableRecord();
+            r->Insert("@opt_query", lgraph::FieldData(new_visitor.GetOptQuery()));
             return;
         }
         FMA_DBG_STREAM(Logger()) << "Plan cache disabled.";

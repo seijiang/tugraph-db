@@ -12,9 +12,6 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-//
-// Created by liyunlong2000 on 23-07-19.
-//
 #pragma once
 #include <iostream>
 #include <string>
@@ -23,21 +20,35 @@
 #include "cypher/execution_plan/optimization/rewrite/edge.h"
 
 #include "cypher/execution_plan/ops/op.h"
-namespace cypher::rewrite {
+namespace cypher {
+namespace rewrite {
 
 class Graph {
  public:
-    std::vector<rewrite::Node> m_nodes;
-    std::vector<rewrite::Edge> m_edges;
+    std::vector<cypher::rewrite::Node> m_nodes;
+    std::vector<cypher::rewrite::Edge> m_edges;
+    size_t m_edge_cnt = 0;
+    size_t m_node_cnt = 0;
 
-    Graph() {}
+    Graph(/* args */) {}
     ~Graph() {}
     void AddNode(size_t id, int label);
 
-    void AddEdge(size_t id, size_t source_id, size_t target_id, std::set<int> labels,
+    void AddEdge(size_t id, size_t source_id, size_t target_id, const std::set<int> &labels,
                  parser::LinkDirection direction);
+    void AddEdge(size_t id, size_t source_id, size_t target_id, const std::set<int> &labels,
+                 parser::LinkDirection direction, int min_hop, int max_hop);
+    void AddEdge(size_t id, size_t source_id, size_t target_id, const std::set<int> &labels,
+                 parser::LinkDirection direction, size_t extend_id);
+    void AddEdge(size_t id, size_t source_id, size_t target_id, const std::set<int> &labels,
+                 parser::LinkDirection direction, size_t extend_id, bool is_varlen);
 
     void PrintGraph();
+
+    void RebuildGraphByHops(std::vector<Graph> &queryGraphs);
+
+    void CopyGraph(Graph &new_graph, const Graph *graph, bool withEdge);
 };
 
-};  // namespace cypher::rewrite
+};  // namespace rewrite
+};  // namespace cypher

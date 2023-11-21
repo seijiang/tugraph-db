@@ -12,14 +12,12 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  */
 
-//
-// Created by liyunlong2000 on 23-07-19.
-//
 #pragma once
 #include <vector>
 #include "cypher/execution_plan/optimization/rewrite/edge.h"
 
-namespace cypher::rewrite {
+namespace cypher {
+namespace rewrite {
 
 class Edge;
 
@@ -32,10 +30,8 @@ class Node {
     std::vector<size_t> m_inedges;
     std::vector<size_t> m_undirectededges;
     Node() {}
-    Node(size_t id, int label) {
-        m_id = id;
-        m_label = label;
-    }
-    ~Node() {}
+    Node(size_t id, int label) : m_id(id), m_label(label) {}
+    ~Node(){}
 };
-};  // namespace cypher::rewrite
+};  // namespace rewrite
+};  // namespace cypher

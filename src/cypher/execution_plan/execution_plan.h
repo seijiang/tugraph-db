@@ -120,5 +120,7 @@ class ExecutionPlan {
     std::string DumpPlan(int indent, bool statistics) const;
 
     std::string DumpGraph() const;  // dump pattern graph
+
+    const std::vector<PatternGraph>& GetPatternGraphs() const { return _pattern_graphs; }
 };
 }  // namespace cypher

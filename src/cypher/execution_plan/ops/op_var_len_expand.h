@@ -18,6 +18,7 @@
 #pragma once
 
 #include "cypher/execution_plan/ops/op.h"
+#include "cypher/execution_plan/optimization/rewrite/path.h"
 
 #ifndef NDEBUG
 #define VAR_LEN_EXP_DUMP_FOR_DEBUG()                                                         \
@@ -207,10 +208,20 @@ class VarLenExpand : public OpBase {
          **/
         if (!get_first || k != 1 ||
             (ctx->path_unique_ && pattern_graph_->VisitedEdges().Contains(eits_[k - 1]))) {
-            do {
-                eits_[k - 1].Next();
-            } while (eits_[k - 1].IsValid() && ctx->path_unique_ &&
-                     pattern_graph_->VisitedEdges().Contains(eits_[k - 1]));
+            if (is_rewrite) {
+                do {
+                    eits_[k - 1].Next();
+                    // 当迭代的边不在可行label集中或已访问时，则继续迭代
+                } while (
+                    eits_[k - 1].IsValid() &&
+                    ((!InFeasibelLabels(eits_[k - 1].GetLabel(), k - 1)) ||
+                     (ctx->path_unique_ && pattern_graph_->VisitedEdges().Contains(eits_[k - 1]))));
+            } else {
+                do {
+                    eits_[k - 1].Next();
+                } while (eits_[k - 1].IsValid() && ctx->path_unique_ &&
+                         pattern_graph_->VisitedEdges().Contains(eits_[k - 1]));
+            }
         }
         do {
             if (!eits_[k - 1].IsValid()) {
@@ -228,6 +239,10 @@ class VarLenExpand : public OpBase {
         if (!eits_[k - 1].IsValid()) return -1;
         relp_->path_.Append(eits_[k - 1].GetUid());
         if (ctx->path_unique_) pattern_graph_->VisitedEdges().Add(eits_[k - 1]);
+
+        // 迭代出相应的边，则更新下一条的可行label集
+        if (is_rewrite) UpdateFeasibleLabel(eits_[k - 1].GetLabel(), k - 1);
+
         return eits_[k - 1].GetNbr(expand_direction_);
     }
 
@@ -239,6 +254,14 @@ class VarLenExpand : public OpBase {
         if (state_ == Resetted) {
             // go to min_hop
             hop_ = min_hop_;
+
+            if (is_rewrite) {
+                RewriteReset();
+                while (!CheckHop(hop_)) {
+                    hop_++;
+                    if (hop_ > max_hop_) return OP_REFRESH;
+                }
+            }
             int64_t nbr_id = GetFirstFromKthHop(ctx, hop_);
             if (nbr_id < 0) return OP_REFRESH;
             neighbor_->PushVid(nbr_id);
@@ -255,11 +278,19 @@ class VarLenExpand : public OpBase {
             // need expand to next hop
             if (hop_ == max_hop_) return OP_REFRESH;
             hop_++;
+
+            if (is_rewrite) {
+                while (!CheckHop(hop_)) {
+                    hop_++;
+                    if (hop_ >= max_hop_) return OP_REFRESH;
+                }
+            }
+
             auto vid = GetFirstFromKthHop(ctx, hop_ - 1);
             if (vid < 0) return OP_REFRESH;
             if (hop_ > 1 && !eits_[hop_ - 2].IsValid()) CYPHER_INTL_ERR();
             _InitializeEdgeIter(ctx, vid, eits_[hop_ - 1]);
-            // TODO(anyone) merge these code similiar to GetNextFromKthHop
+            // TODO: merge these code similiar to GetNextFromKthHop // NOLINT
             do {
                 if (!eits_[hop_ - 1].IsValid()) {
                     auto v = GetNextFromKthHop(ctx, hop_ - 1, false);
@@ -273,7 +304,7 @@ class VarLenExpand : public OpBase {
             } while (!eits_[hop_ - 1].IsValid());
             neighbor_->PushVid(eits_[hop_ - 1].GetNbr(expand_direction_));
             relp_->path_.Append(eits_[hop_ - 1].GetUid());
-            // TODO(anyone) remove in last hop
+            // todo: remove in last hop
             if (ctx->path_unique_) pattern_graph_->VisitedEdges().Add(eits_[hop_ - 1]);
             VAR_LEN_EXP_DUMP_FOR_DEBUG();
             return OP_OK;
@@ -285,40 +316,47 @@ class VarLenExpand : public OpBase {
             if (NextWithoutLabelFilter(ctx) != OP_OK) return OP_REFRESH;
         } while (!neighbor_->Label().empty() && neighbor_->IsValidAfterMaterialize(ctx) &&
                  neighbor_->ItRef()->GetLabel() != neighbor_->Label());
+
         return OP_OK;
     }
 
  public:
-    cypher::PatternGraph *pattern_graph_ = nullptr;
     cypher::Node *start_ = nullptr;         // start node to expand
     cypher::Node *neighbor_ = nullptr;      // neighbor of start node
     cypher::Relationship *relp_ = nullptr;  // relationship to expand
+    lgraph::EIter *eit_ = nullptr;
     int start_rec_idx_;
     int nbr_rec_idx_;
     int relp_rec_idx_;
+    cypher::PatternGraph *pattern_graph_ = nullptr;
     int min_hop_;
     int max_hop_;
     int hop_;  // current hop working on
     bool collect_all_;
     ExpandTowards expand_direction_;
-    std::vector<lgraph::EIter> &eits_;
+    // std::queue<lgraph::VertexId> frontier_buffer_;
+    // std::queue<Path> path_buffer_;
+    std::vector<lgraph::EIter> eits_;
     enum State {
         Uninitialized, /* ExpandAll wasn't initialized it. */
         Resetted,      /* ExpandAll was just restarted. */
         Consuming,     /* ExpandAll consuming data. */
     } state_;
+    std::vector<rewrite::Path> m_paths;                    // 算子对应的特化路径
+    std::vector<std::set<std::string>> m_feasible_labels;  // 每一跳对应的可行标签集
+    bool is_rewrite = false;
 
     VarLenExpand(PatternGraph *pattern_graph, Node *start, Node *neighbor, Relationship *relp)
         : OpBase(OpType::VAR_LEN_EXPAND, "Variable Length Expand"),
-          pattern_graph_(pattern_graph),
           start_(start),
           neighbor_(neighbor),
           relp_(relp),
+          pattern_graph_(pattern_graph),
           min_hop_(relp->MinHop()),
           max_hop_(relp->MaxHop()),
           hop_(0),
-          collect_all_(false),
-          eits_(relp_->ItsRef()) {
+          collect_all_(false) {
+        eit_ = relp->ItRef();
         modifies.emplace_back(neighbor_->Alias());
         modifies.emplace_back(relp_->Alias());
         auto &sym_tab = pattern_graph->symbol_table;
@@ -334,6 +372,94 @@ class VarLenExpand : public OpBase {
         nbr_rec_idx_ = dit->second.id;
         relp_rec_idx_ = rit->second.id;
         state_ = Uninitialized;
+    }
+
+    VarLenExpand(PatternGraph *pattern_graph, Node *start, Node *neighbor, Relationship *relp,
+                 const std::vector<rewrite::Path> &paths)
+        : OpBase(OpType::VAR_LEN_EXPAND, "Variable Length Expand"),
+          start_(start),
+          neighbor_(neighbor),
+          relp_(relp),
+          pattern_graph_(pattern_graph),
+          min_hop_(relp->MinHop()),
+          max_hop_(relp->MaxHop()),
+          hop_(0),
+          collect_all_(false) {
+        eit_ = relp->ItRef();
+        modifies.emplace_back(neighbor_->Alias());
+        modifies.emplace_back(relp_->Alias());
+        auto &sym_tab = pattern_graph->symbol_table;
+        auto sit = sym_tab.symbols.find(start_->Alias());
+        auto dit = sym_tab.symbols.find(neighbor_->Alias());
+        auto rit = sym_tab.symbols.find(relp_->Alias());
+        CYPHER_THROW_ASSERT(sit != sym_tab.symbols.end() && dit != sym_tab.symbols.end() &&
+                            rit != sym_tab.symbols.end());
+        expand_direction_ = relp_->Undirected()            ? BIDIRECTIONAL
+                            : relp_->Src() == start_->ID() ? FORWARD
+                                                           : REVERSED;
+        start_rec_idx_ = sit->second.id;
+        nbr_rec_idx_ = dit->second.id;
+        relp_rec_idx_ = rit->second.id;
+        state_ = Uninitialized;
+
+        // 加入多条路径并初始化第一跳的可行标签集
+        is_rewrite = true;
+        m_paths = paths;
+        m_feasible_labels.resize(max_hop_ + 1);
+        std::set<std::string> &first_hop_labels = m_feasible_labels[0];
+        // 设置第一跳的可行标签集，后续不需要改变
+        for (auto path : m_paths) {
+            first_hop_labels.insert(path.m_elabels[0].begin(), path.m_elabels[0].end());
+        }
+    }
+
+    // 根据当前的边label，遍历当前可行路径，更新下一跳的可行标签集
+    void UpdateFeasibleLabel(std::string curr_label, int eit_idx) {
+        // hop_:当前跳数,对应path中边数量为hop_的路径
+        // eit_idx:当前的eit_idx
+        m_feasible_labels[eit_idx + 1].clear();
+        if (eit_idx == hop_ - 1) {
+            return;
+        }
+        for (auto path : m_paths) {
+            if ((int)path.m_elabels.size() != hop_) {
+                continue;
+            }
+            if (path.m_elabels[eit_idx].count(curr_label) != 0) {
+                // 对应当前的路径，更新下一跳的可行标签集
+                m_feasible_labels[eit_idx + 1].insert(path.m_elabels[eit_idx + 1].begin(),
+                                                      path.m_elabels[eit_idx + 1].end());
+            }
+        }
+    }
+
+    // 重置rewrite相关的参数，第一跳的可行标签不需要重置
+    void RewriteReset() {
+        for (size_t i = 1; i < m_feasible_labels.size(); i++) {
+            m_feasible_labels[i].clear();
+        }
+    }
+
+    // 当前跳数是否有对应的路径
+    bool CheckHop(int curr_hop) {
+        for (auto path : m_paths) {
+            if ((int)path.m_elabels.size() == curr_hop) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 当前label是否在序号为eit_idx的可行标签集中
+    bool InFeasibelLabels(std::string curr_label, int eit_idx) {
+        // if(m_feasible_labels.empty()){
+        //     return false;
+        // }
+        if (!m_feasible_labels[eit_idx].empty() &&
+            m_feasible_labels[eit_idx].count(curr_label) != 0) {
+            return true;
+        }
+        return false;
     }
 
     OpResult Initialize(RTContext *ctx) override {
@@ -359,6 +485,7 @@ class VarLenExpand : public OpBase {
             auto res = child->Consume(ctx);
             relp_->path_.Clear();
             state_ = Resetted;
+            RewriteReset();
             if (res != OP_OK) {
                 /* When consume after the stream is DEPLETED, make sure
                  * the result always be DEPLETED.  */
@@ -376,7 +503,9 @@ class VarLenExpand : public OpBase {
         // std::queue<lgraph::VertexId>().swap(frontier_buffer_);
         // std::queue<Path>().swap(path_buffer_);
         hop_ = 0;
-        // TODO(anyone) reset modifies
+        // TODO: reset modifies // NOLINT
+
+        if (is_rewrite) RewriteReset();
         return OP_OK;
     }
 
