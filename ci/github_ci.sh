@@ -2,7 +2,8 @@
 set -e
 
 ASAN=$1
-WITH_PROCEDURE=${2:-"OFF"}
+TEST=$2
+WITH_PROCEDURE=${3:-"OFF"}
 
 cd $WORKSPACE
 
@@ -62,17 +63,11 @@ else
   sh ./cpp/CppClientTest/compile.sh
   cp -r ./cpp/CppClientTest/build/clienttest $WORKSPACE/build/output/
 
-# integrate tests
-cd $WORKSPACE/build/output
-cp ../../src/client/python/TuGraphClient/TuGraphClient.py .
-cp ../../src/client/python/TuGraphClient/TuGraphRestClient.py .
-cp -r ../../test/integration/* ./
-cp -r ../../learn/examples/* ./
-cp -r ../../demo/movie .
-if [[ "$WITH_PROCEDURE" == "OFF" ]]; then
-    rm -rf test_algo.py test_sampling.py test_train.py
-fi
-pytest ./
+  #cd $WORKSPACE/src/client/python/TuGraphClient
+  # install TuGraphClient
+  #python3 setup.py install
+  # run TuGraphClient unit_tests
+  #python3 setup.py test
 
   # integrate tests
   cd $WORKSPACE/build/output
