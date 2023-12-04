@@ -188,6 +188,9 @@ class VarLenExpand : public OpBase {
         if (k == 1) {
             relp_->path_.Append(eits_[0].GetUid());
             if (ctx->path_unique_) pattern_graph_->VisitedEdges().Add(eits_[0]);
+            if (is_rewrite) {
+                UpdateFeasibleLabel(eits_[k - 1].GetLabel(), k - 1);
+            }
             return eits_[0].GetNbr(expand_direction_);
         }
         // k >= 2
